@@ -18,6 +18,7 @@ import { useColors } from "@/hooks/useColors";
 
 type ViewMode = "smali" | "strings" | "inject";
 type EditorMode = "view" | "edit";
+type InjectMode = "after" | "before" | "replace";
 
 const FILE_CONTENTS: Record<string, { code: string; language: "smali" | "java" | "xml" | "json" }> = {
   "SessionManager.smali": {
@@ -168,6 +169,13 @@ export default function EditorScreen() {
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
   const [patchedFiles, setPatchedFiles] = useState<Set<string>>(new Set());
 
+  // بحث وحقن ذكي
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchInjectCode, setSearchInjectCode] = useState("");
+  const [injectMode, setInjectMode] = useState<InjectMode>("after");
+  const [searchResults, setSearchResults] = useState<{ lineIndex: number; lineText: string }[]>([]);
+  const [searchDone, setSearchDone] = useState(false);
+
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const bottomPad = Platform.OS === "web" ? 34 : insets.bottom;
 
@@ -197,6 +205,59 @@ export default function EditorScreen() {
     setInjectedCode("");
     setSelectedTemplate(null);
     Alert.alert("تم الحقن", `تم حقن الكود في ${selectedFile} بنجاح.`);
+  };
+
+  // بحث ذكي — يجد الأسطر المطابقة
+  const handleSmartSearch = () => {
+    if (!searchQuery.trim()) return;
+    const current = editedCode[selectedFile] ?? fileData?.code ?? "";
+    const lines = current.split("\n");
+    const results = lines
+      .map((line, i) => ({ lineIndex: i, lineText: line }))
+      .filter(({ lineText }) => lineText.toLowerCase().includes(searchQuery.toLowerCase()));
+    setSearchResults(results);
+    setSearchDone(true);
+  };
+
+  // حقن ذكي — يطبّق الكود عند نقاط التطابق
+  const handleSmartInject = () => {
+    if (!searchQuery.trim() || !searchInjectCode.trim() || searchResults.length === 0) return;
+    if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const current = editedCode[selectedFile] ?? fileData?.code ?? "";
+    const lines = current.split("\n");
+    const matchedIndices = new Set(searchResults.map(r => r.lineIndex));
+    const newLines: string[] = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      if (matchedIndices.has(i)) {
+        if (injectMode === "before") {
+          newLines.push("    # === INJECTED ===");
+          newLines.push(...searchInjectCode.split("\n"));
+          newLines.push(lines[i]);
+        } else if (injectMode === "after") {
+          newLines.push(lines[i]);
+          newLines.push("    # === INJECTED ===");
+          newLines.push(...searchInjectCode.split("\n"));
+        } else {
+          // replace
+          newLines.push("    # === REPLACED ===");
+          newLines.push(...searchInjectCode.split("\n"));
+        }
+      } else {
+        newLines.push(lines[i]);
+      }
+    }
+
+    setEditedCode(prev => ({ ...prev, [selectedFile]: newLines.join("\n") }));
+    setPatchedFiles(prev => new Set([...prev, selectedFile]));
+    setSearchQuery("");
+    setSearchInjectCode("");
+    setSearchResults([]);
+    setSearchDone(false);
+    Alert.alert(
+      "تم الحقن الذكي ✓",
+      `تم ${injectMode === "replace" ? "استبدال" : "حقن الكود " + (injectMode === "after" ? "بعد" : "قبل")} ${searchResults.length} موقع في ${selectedFile}`
+    );
   };
 
   const handleEditString = (entry: StringEntry) => {
@@ -439,12 +500,142 @@ export default function EditorScreen() {
             >
               <Feather name="zap" size={18} color={injectedCode.trim() ? "#fff" : colors.mutedForeground} />
               <Text style={[styles.injectBtnText, { color: injectedCode.trim() ? "#fff" : colors.mutedForeground }]}>
-                حقن الكود في {selectedFile}
+                حقن في نهاية {selectedFile}
               </Text>
             </TouchableOpacity>
 
+            {/* ===== بحث وحقن ذكي ===== */}
+            <View style={[styles.smartDivider, { borderTopColor: colors.border }]}>
+              <View style={[styles.smartDividerLabel, { backgroundColor: colors.background }]}>
+                <Feather name="search" size={12} color={colors.cyan} />
+                <Text style={[styles.smartDividerText, { color: colors.cyan }]}>بحث وحقن ذكي</Text>
+              </View>
+            </View>
+
+            <View style={[styles.smartBox, { backgroundColor: colors.card, borderColor: colors.cyan + "44" }]}>
+              <Text style={[styles.smartDesc, { color: colors.mutedForeground }]}>
+                ابحث عن نص أو دالة داخل الكود وأحقن عندها مباشرةً — دون الحاجة لمعرفة رقم السطر
+              </Text>
+
+              {/* حقل البحث */}
+              <View style={[styles.smartInputWrap, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+                <Feather name="search" size={14} color={colors.mutedForeground} />
+                <TextInput
+                  style={[styles.smartInput, { color: colors.foreground }]}
+                  placeholder="ابحث عن... (مثال: saveToken  أو  AES)"
+                  placeholderTextColor={colors.mutedForeground}
+                  value={searchQuery}
+                  onChangeText={v => { setSearchQuery(v); setSearchDone(false); setSearchResults([]); }}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                {searchQuery.length > 0 && (
+                  <TouchableOpacity onPress={() => { setSearchQuery(""); setSearchResults([]); setSearchDone(false); }}>
+                    <Feather name="x" size={14} color={colors.mutedForeground} />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* زر البحث */}
+              <TouchableOpacity
+                onPress={handleSmartSearch}
+                disabled={!searchQuery.trim()}
+                style={[styles.searchBtn, { backgroundColor: searchQuery.trim() ? colors.cyan + "22" : colors.muted, borderColor: searchQuery.trim() ? colors.cyan : colors.border }]}
+              >
+                <Feather name="search" size={14} color={searchQuery.trim() ? colors.cyan : colors.mutedForeground} />
+                <Text style={[styles.searchBtnText, { color: searchQuery.trim() ? colors.cyan : colors.mutedForeground }]}>
+                  بحث في {selectedFile}
+                </Text>
+              </TouchableOpacity>
+
+              {/* نتائج البحث */}
+              {searchDone && (
+                <View style={[styles.resultsBox, { backgroundColor: colors.muted, borderColor: searchResults.length > 0 ? colors.cyan + "55" : colors.red + "55" }]}>
+                  {searchResults.length === 0 ? (
+                    <View style={styles.noResultRow}>
+                      <Feather name="alert-circle" size={14} color={colors.red} />
+                      <Text style={[styles.noResultText, { color: colors.red }]}>لم يُعثر على "{searchQuery}" في هذا الملف</Text>
+                    </View>
+                  ) : (
+                    <>
+                      <View style={styles.resultHeader}>
+                        <Feather name="check-circle" size={13} color={colors.cyan} />
+                        <Text style={[styles.resultCount, { color: colors.cyan }]}>
+                          {searchResults.length} تطابق في {selectedFile}
+                        </Text>
+                      </View>
+                      {searchResults.slice(0, 4).map(r => (
+                        <View key={r.lineIndex} style={styles.resultLine}>
+                          <Text style={[styles.resultLineNum, { color: colors.mutedForeground }]}>#{r.lineIndex + 1}</Text>
+                          <Text style={[styles.resultLineText, { color: colors.foreground }]} numberOfLines={1}>{r.lineText.trim()}</Text>
+                        </View>
+                      ))}
+                      {searchResults.length > 4 && (
+                        <Text style={[styles.moreResults, { color: colors.mutedForeground }]}>+ {searchResults.length - 4} أسطر أخرى</Text>
+                      )}
+                    </>
+                  )}
+                </View>
+              )}
+
+              {/* وضع الحقن */}
+              {searchResults.length > 0 && (
+                <>
+                  <Text style={[styles.sectionTitle, { color: colors.foreground, marginTop: 12 }]}>طريقة الحقن</Text>
+                  <View style={styles.modeRow}>
+                    {(["after", "before", "replace"] as InjectMode[]).map(mode => (
+                      <TouchableOpacity
+                        key={mode}
+                        onPress={() => setInjectMode(mode)}
+                        style={[styles.modeBtn, {
+                          backgroundColor: injectMode === mode ? colors.cyan + "22" : colors.muted,
+                          borderColor: injectMode === mode ? colors.cyan : colors.border,
+                        }]}
+                      >
+                        <Feather
+                          name={mode === "after" ? "arrow-down" : mode === "before" ? "arrow-up" : "refresh-cw"}
+                          size={12}
+                          color={injectMode === mode ? colors.cyan : colors.mutedForeground}
+                        />
+                        <Text style={[styles.modeBtnText, { color: injectMode === mode ? colors.cyan : colors.mutedForeground }]}>
+                          {mode === "after" ? "حقن بعده" : mode === "before" ? "حقن قبله" : "استبدال"}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  {/* كود الحقن */}
+                  <Text style={[styles.sectionTitle, { color: colors.foreground }]}>كود الحقن</Text>
+                  <View style={[styles.injectInputWrap, { backgroundColor: "#0D1117", borderColor: colors.cyan + "44" }]}>
+                    <TextInput
+                      style={[styles.injectInput, { color: "#8B949E" }]}
+                      value={searchInjectCode}
+                      onChangeText={setSearchInjectCode}
+                      multiline
+                      placeholder="الكود الذي سيُحقن..."
+                      placeholderTextColor="#30363D"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      textAlignVertical="top"
+                    />
+                  </View>
+
+                  <TouchableOpacity
+                    onPress={handleSmartInject}
+                    disabled={!searchInjectCode.trim()}
+                    style={[styles.injectBtn, { backgroundColor: searchInjectCode.trim() ? colors.cyan : colors.muted, marginBottom: 0 }]}
+                  >
+                    <Feather name="target" size={18} color={searchInjectCode.trim() ? "#000" : colors.mutedForeground} />
+                    <Text style={[styles.injectBtnText, { color: searchInjectCode.trim() ? "#000" : colors.mutedForeground }]}>
+                      تطبيق الحقن في {searchResults.length} موقع
+                    </Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+
             {patchedFiles.size > 0 && (
-              <View style={[styles.patchedList, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <View style={[styles.patchedList, { backgroundColor: colors.card, borderColor: colors.border, marginTop: 14 }]}>
                 <Text style={[styles.patchedTitle, { color: colors.foreground }]}>الملفات المعدّلة ({patchedFiles.size})</Text>
                 {[...patchedFiles].map(f => (
                   <View key={f} style={styles.patchedItem}>
@@ -548,4 +739,27 @@ const styles = StyleSheet.create({
   patchedTitle: { fontSize: 13, fontFamily: "Inter_700Bold", marginBottom: 4 },
   patchedItem: { flexDirection: "row", alignItems: "center", gap: 8 },
   patchedFile: { fontSize: 12, fontFamily: "Inter_400Regular" },
+
+  // بحث وحقن ذكي
+  smartDivider: { borderTopWidth: StyleSheet.hairlineWidth, marginVertical: 20, alignItems: "center", justifyContent: "center" },
+  smartDividerLabel: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, marginTop: -10 },
+  smartDividerText: { fontSize: 12, fontFamily: "Inter_700Bold", letterSpacing: 1 },
+  smartBox: { borderRadius: 14, borderWidth: 1, padding: 14, gap: 10, marginBottom: 16 },
+  smartDesc: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 18 },
+  smartInputWrap: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, borderWidth: 1 },
+  smartInput: { flex: 1, fontSize: 13, fontFamily: "Inter_400Regular" },
+  searchBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 10, borderRadius: 10, borderWidth: 1 },
+  searchBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  resultsBox: { borderRadius: 10, borderWidth: 1, padding: 10, gap: 6 },
+  noResultRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  noResultText: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  resultHeader: { flexDirection: "row", alignItems: "center", gap: 6 },
+  resultCount: { fontSize: 12, fontFamily: "Inter_700Bold" },
+  resultLine: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 3 },
+  resultLineNum: { fontSize: 11, fontFamily: "Inter_400Regular", width: 32, textAlign: "right" },
+  resultLineText: { flex: 1, fontSize: 11, fontFamily: Platform.select({ ios: "Menlo", android: "monospace", default: "monospace" }) },
+  moreResults: { fontSize: 11, fontFamily: "Inter_400Regular", textAlign: "center", paddingTop: 4 },
+  modeRow: { flexDirection: "row", gap: 8, marginBottom: 4 },
+  modeBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 8, borderRadius: 8, borderWidth: 1 },
+  modeBtnText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
 });
