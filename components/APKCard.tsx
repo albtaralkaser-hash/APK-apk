@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import React from "react";
-import { Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Alert, Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 import { Project } from "@/contexts/ProjectContext";
 import { useColors } from "@/hooks/useColors";
@@ -10,7 +10,8 @@ interface APKCardProps {
   project: Project;
   isActive: boolean;
   onPress: () => void;
-  onLongPress: () => void;
+  onDelete: () => void;
+  onStop: () => void;
 }
 
 function formatSize(bytes: number): string {
@@ -35,7 +36,7 @@ const STATUS_CONFIG = {
   error:     { label: "Error",     color: "#EF4444", icon: "alert-circle" as const },
 };
 
-export function APKCard({ project, isActive, onPress, onLongPress }: APKCardProps) {
+export function APKCard({ project, isActive, onPress, onDelete, onStop }: APKCardProps) {
   const colors = useColors();
   const cfg = STATUS_CONFIG[project.status];
 
@@ -44,13 +45,36 @@ export function APKCard({ project, isActive, onPress, onLongPress }: APKCardProp
     onPress();
   };
 
+  const handleDelete = () => {
+    if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Alert.alert(
+      "حذف المشروع",
+      `هل تريد حذف "${project.name}" نهائياً؟`,
+      [
+        { text: "إلغاء", style: "cancel" },
+        { text: "حذف", style: "destructive", onPress: onDelete },
+      ]
+    );
+  };
+
+  const handleStop = () => {
+    if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Alert.alert(
+      "إيقاف التحليل",
+      "هل تريد إيقاف عملية التحليل؟ يمكنك استئنافها لاحقاً.",
+      [
+        { text: "إلغاء", style: "cancel" },
+        { text: "إيقاف", style: "destructive", onPress: onStop },
+      ]
+    );
+  };
+
   const criticalCount = project.findings.filter(f => f.severity === "critical").length;
   const highCount = project.findings.filter(f => f.severity === "high").length;
 
   return (
     <TouchableOpacity
       onPress={handlePress}
-      onLongPress={onLongPress}
       activeOpacity={0.75}
       style={[
         styles.card,
@@ -72,6 +96,26 @@ export function APKCard({ project, isActive, onPress, onLongPress }: APKCardProp
           <Feather name={cfg.icon} size={12} color={cfg.color} />
           <Text style={[styles.statusText, { color: cfg.color }]}>{cfg.label}</Text>
         </View>
+
+        {/* زر الإيقاف — يظهر فقط أثناء التحليل */}
+        {project.status === "analyzing" && (
+          <TouchableOpacity
+            onPress={handleStop}
+            style={[styles.actionBtn, { backgroundColor: "#F59E0B22", borderColor: "#F59E0B55" }]}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Feather name="square" size={13} color="#F59E0B" />
+          </TouchableOpacity>
+        )}
+
+        {/* زر الحذف — دائماً مرئي */}
+        <TouchableOpacity
+          onPress={handleDelete}
+          style={[styles.actionBtn, { backgroundColor: "#EF444422", borderColor: "#EF444455" }]}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Feather name="trash-2" size={13} color="#EF4444" />
+        </TouchableOpacity>
       </View>
 
       {project.status === "analyzing" && (
@@ -127,13 +171,14 @@ const styles = StyleSheet.create({
   card: { borderRadius: 14, borderWidth: 1, marginBottom: 10, overflow: "hidden", padding: 14 },
   activeCard: { borderWidth: 1.5 },
   activeLine: { position: "absolute", left: 0, top: 0, bottom: 0, width: 3, borderRadius: 3 },
-  header: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10 },
+  header: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10 },
   iconWrap: { width: 40, height: 40, borderRadius: 10, alignItems: "center", justifyContent: "center" },
   headerText: { flex: 1 },
   name: { fontSize: 15, fontFamily: "Inter_600SemiBold", marginBottom: 2 },
   pkg: { fontSize: 12, fontFamily: "Inter_400Regular" },
   statusBadge: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 20 },
   statusText: { fontSize: 11, fontFamily: "Inter_500Medium" },
+  actionBtn: { width: 30, height: 30, borderRadius: 8, alignItems: "center", justifyContent: "center", borderWidth: 1 },
   progressRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10 },
   progressBg: { flex: 1, height: 4, borderRadius: 2, overflow: "hidden" },
   progressFill: { height: "100%", borderRadius: 2 },
