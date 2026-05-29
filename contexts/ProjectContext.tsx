@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 
 export type ProjectStatus = "pending" | "analyzing" | "complete" | "error";
 export type ModuleStatus = "idle" | "running" | "complete" | "error";
@@ -151,6 +151,7 @@ interface ProjectContextType {
   setActiveProjectId: (id: string) => void;
   addProject: (name: string, packageName: string, pickedFile?: PickedFile) => void;
   deleteProject: (id: string) => void;
+  stopProject: (id: string) => void;
 }
 
 const ProjectContext = createContext<ProjectContextType | null>(null);
@@ -158,9 +159,13 @@ const ProjectContext = createContext<ProjectContextType | null>(null);
 export function ProjectProvider({ children }: { children: React.ReactNode }) {
   const [projects, setProjects] = useState<Project[]>(DEMO_PROJECTS);
   const [activeProjectId, setActiveProjectId] = useState<string>("p1");
+  const intervalsRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
 
   useEffect(() => {
     loadProjects();
+    return () => {
+      Object.values(intervalsRef.current).forEach(clearInterval);
+    };
   }, []);
 
   const loadProjects = async () => {
@@ -201,10 +206,12 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       obfuscated: false,
       nativeLibs: [],
     };
-    const updated = [newProject, ...projects];
-    setProjects(updated);
+    setProjects(prev => {
+      const updated = [newProject, ...prev];
+      saveProjects(updated);
+      return updated;
+    });
     setActiveProjectId(newProject.id);
-    saveProjects(updated);
 
     let progress = 0;
     const interval = setInterval(() => {
@@ -212,32 +219,63 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       if (progress >= 100) {
         progress = 100;
         clearInterval(interval);
-        setProjects(prev => prev.map(p =>
-          p.id === newProject.id
-            ? { ...p, status: "complete", analysisProgress: 100, modules: DEMO_MODULES, classCount: 892, methodCount: 6234, stringCount: 2100, urlCount: 28, findings: DEMO_FINDINGS.slice(0, 5), obfuscated: true }
-            : p
-        ));
+        delete intervalsRef.current[newProject.id];
+        setProjects(prev => {
+          const updated = prev.map(p =>
+            p.id === newProject.id
+              ? { ...p, status: "complete" as ProjectStatus, analysisProgress: 100, modules: DEMO_MODULES, classCount: 892, methodCount: 6234, stringCount: 2100, urlCount: 28, findings: DEMO_FINDINGS.slice(0, 5), obfuscated: true }
+              : p
+          );
+          saveProjects(updated);
+          return updated;
+        });
       } else {
         setProjects(prev => prev.map(p =>
           p.id === newProject.id ? { ...p, analysisProgress: Math.min(progress, 100) } : p
         ));
       }
     }, 400);
-  }, [projects]);
+
+    intervalsRef.current[newProject.id] = interval;
+  }, []);
+
+  const stopProject = useCallback((id: string) => {
+    if (intervalsRef.current[id]) {
+      clearInterval(intervalsRef.current[id]);
+      delete intervalsRef.current[id];
+    }
+    setProjects(prev => {
+      const updated = prev.map(p =>
+        p.id === id ? { ...p, status: "pending" as ProjectStatus } : p
+      );
+      saveProjects(updated);
+      return updated;
+    });
+  }, []);
 
   const deleteProject = useCallback((id: string) => {
-    const updated = projects.filter(p => p.id !== id);
-    setProjects(updated);
-    saveProjects(updated);
-    if (activeProjectId === id && updated.length > 0) {
-      setActiveProjectId(updated[0].id);
+    if (intervalsRef.current[id]) {
+      clearInterval(intervalsRef.current[id]);
+      delete intervalsRef.current[id];
     }
-  }, [projects, activeProjectId]);
+    setProjects(prev => {
+      const updated = prev.filter(p => p.id !== id);
+      saveProjects(updated);
+      return updated;
+    });
+    setActiveProjectId(prev => {
+      if (prev === id) {
+        const remaining = projects.filter(p => p.id !== id);
+        return remaining.length > 0 ? remaining[0].id : "";
+      }
+      return prev;
+    });
+  }, [projects]);
 
   const activeProject = projects.find(p => p.id === activeProjectId) ?? null;
 
   return (
-    <ProjectContext.Provider value={{ projects, activeProject, setActiveProjectId, addProject, deleteProject }}>
+    <ProjectContext.Provider value={{ projects, activeProject, setActiveProjectId, addProject, deleteProject, stopProject }}>
       {children}
     </ProjectContext.Provider>
   );
