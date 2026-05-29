@@ -23,7 +23,7 @@ import { useColors } from "@/hooks/useColors";
 export default function ProjectsScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { projects, activeProject, setActiveProjectId, addProject, deleteProject } = useProject();
+  const { projects, activeProject, setActiveProjectId, addProject, deleteProject, stopProject } = useProject();
   const [showModal, setShowModal] = useState(false);
   const [apkName, setApkName] = useState("");
   const [pkgName, setPkgName] = useState("");
@@ -90,13 +90,6 @@ export default function ProjectsScreen() {
     setShowModal(false);
   };
 
-  const handleLongPress = (id: string) => {
-    if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    Alert.alert("حذف المشروع", "هل تريد حذف هذا المشروع؟", [
-      { text: "إلغاء", style: "cancel" },
-      { text: "حذف", style: "destructive", onPress: () => deleteProject(id) },
-    ]);
-  };
 
   const completed = projects.filter(p => p.status === "complete").length;
   const analyzing = projects.filter(p => p.status === "analyzing").length;
@@ -156,7 +149,8 @@ export default function ProjectsScreen() {
               setActiveProjectId(item.id);
               router.push("/(tabs)/analysis");
             }}
-            onLongPress={() => handleLongPress(item.id)}
+            onDelete={() => deleteProject(item.id)}
+            onStop={() => stopProject(item.id)}
           />
         )}
         ListEmptyComponent={
