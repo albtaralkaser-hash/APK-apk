@@ -34,10 +34,26 @@ export default function ProjectsScreen() {
   const bottomPad = Platform.OS === "web" ? 34 : insets.bottom;
 
   const handlePickAPK = async () => {
+    // Web: استخدم input[type=file] عادي
     if (Platform.OS === "web") {
-      Alert.alert("تنبيه", "استيراد الملفات متاح فقط على Android وiOS");
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".apk,application/vnd.android.package-archive,*/*";
+      input.onchange = (e: Event) => {
+        const file = (e.target as HTMLInputElement).files?.[0];
+        if (file) {
+          const uri = URL.createObjectURL(file);
+          const name = file.name.replace(/\.apk$/i, "");
+          setPickedFile({ name: file.name, size: file.size, uri });
+          setApkName(name);
+          setPkgName("");
+          setShowModal(true);
+        }
+      };
+      input.click();
       return;
     }
+    // Native: استخدم expo-document-picker
     try {
       setPicking(true);
       const result = await DocumentPicker.getDocumentAsync({
